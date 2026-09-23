@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Visión nocturna</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#020503; --phos:#8dffa8; --phos-dim:#2f6b3d; --ink:#d9ffe2; --panel:rgba(4,14,7,.78); --warn:#ffcf5a;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+:root[data-theme="light"]{--bg:#020503}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Saira Condensed","Arial Narrow",system-ui,sans-serif;overflow:hidden}
+.stage{position:relative;height:100%;display:flex;flex-direction:column}
+.view{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
+canvas,video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+canvas{z-index:1}
+.vignette{pointer-events:none;position:absolute;inset:0;z-index:2;
+  background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.75) 100%)}
+.reticle{pointer-events:none;z-index:2;position:absolute;left:50%;top:50%;width:64px;height:64px;
+  transform:translate(-50%,-50%);border:1px solid rgba(141,255,168,.45);border-radius:50%}
+.reticle::before,.reticle::after{content:"";position:absolute;background:rgba(141,255,168,.45)}
+.reticle::before{left:50%;top:-14px;bottom:-14px;width:1px}
+.reticle::after{top:50%;left:-14px;right:-14px;height:1px}
+.hud{z-index:2;position:absolute;left:14px;top:12px;font-size:15px;letter-spacing:.04em;color:var(--phos);
+  text-shadow:0 0 6px rgba(141,255,168,.6)}
+.start{z-index:3;position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:18px;padding:24px;text-align:center;background:var(--bg)}
+.start h1{margin:0;font-size:clamp(40px,12vw,64px);line-height:.95;font-weight:700;color:var(--phos);
+  text-shadow:0 0 18px rgba(141,255,168,.35)}
+.start p{margin:0;max-width:30ch;font-size:18px;line-height:1.35;color:#9fc7aa}
+.big{font:inherit;font-size:22px;font-weight:700;padding:14px 34px;border-radius:999px;border:0;
+  background:var(--phos);color:#02140a;cursor:pointer}
+.err{color:var(--warn);font-size:17px;max-width:32ch}
+.controls{background:var(--panel);padding:12px 16px 14px;display:grid;gap:10px;
+  border-top:1px solid var(--phos-dim)}
+.row{display:flex;align-items:center;gap:12px}
+.row label{width:84px;font-size:17px;color:#b8e6c4}
+.row input[type=range]{flex:1;accent-color:var(--phos);height:28px}
+.row output{width:40px;text-align:right;font-size:17px;color:var(--phos)}
+.btns{display:flex;gap:8px}
+.btns button{flex:1;font:inherit;font-size:17px;font-weight:600;padding:10px 6px;border-radius:10px;
+  background:transparent;color:var(--phos);border:1px solid var(--phos-dim);cursor:pointer}
+.btns button[aria-pressed="true"]{background:var(--phos);color:#02140a;border-color:var(--phos)}
+.btns button:disabled{opacity:.35}
+button:focus-visible,input:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="view">
+    <video id="v" playsinline muted autoplay></video>
+    <canvas id="c"></canvas>
+    <div class="vignette"></div>
+    <div class="reticle"></div>
+    <div class="hud" id="hud">ganancia x4</div>
+    <div class="start" id="start">
+      <h1>Visión<br>nocturna</h1>
+      <p>Aclara lo que ve la cámara de tu celular cuando hay poca luz.</p>
+      <button class="big" id="go">Abrir cámara</button>
+      <div class="err" id="err" hidden></div>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="row"><label for="gain">Brillo</label><input id="gain" type="range" min="1" max="12" step="0.5" value="4"><output id="gainO">4</output></div>
+    <div class="row"><label for="smooth">Menos ruido</label><input id="smooth" type="range" min="0" max="90" step="5" value="60"><output id="smoothO">60</output></div>
+    <div class="btns">
+      <button id="mode" aria-pressed="true">Verde</button>
+      <button id="torch" aria-pressed="false" disabled>Linterna</button>
+      <button id="flip">Cambiar cámara</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const v=document.getElementById('v'), c=document.getElementById('c'), ctx=c.getContext('2d',{willReadFrequently:true});
+  const gainEl=document.getElementById('gain'), smoothEl=document.getElementById('smooth');
+  const hud=document.getElementById('hud'), start=document.getElementById('start'), err=document.getElementById('err');
+  const modeBtn=document.getElementById('mode'), torchBtn=document.getElementById('torch'), flipBtn=document.getElementById('flip');
+  let stream=null, track=null, facing='environment', green=true, torchOn=false, acc=null, running=false;
+  const MAXW=640;
+
+  function sync(){
+    document.getElementById('gainO').textContent=gainEl.value;
+    document.getElementById('smoothO').textContent=smoothEl.value;
+    hud.textContent='ganancia x'+gainEl.value+(green?'  ·  verde':'  ·  color');
+  }
+  gainEl.oninput=sync; smoothEl.oninput=sync; sync();
+
+  async function open(){
+    err.hidden=true;
+    if(stream){stream.getTracks().forEach(t=>t.stop());}
+    if(!window.isSecureContext||!navigator.mediaDevices){
+      err.textContent='Esta página no está abierta con https, por eso el navegador bloquea la cámara. Ábrela con el enlace https en Chrome.';
+      err.hidden=false; start.hidden=false; return;
+    }
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:facing}});
+    }catch(e1){
+      try{ stream=await navigator.mediaDevices.getUserMedia({audio:false,video:true}); }
+      catch(e){
+        const msgs={
+          NotAllowedError:'La cámara está bloqueada. Toca el candado junto a la dirección, entra a Permisos y pon Cámara en Permitir. Luego recarga.',
+          NotReadableError:'Otra app está usando la cámara. Cierra la cámara, WhatsApp o apps de video y vuelve a intentar.',
+          NotFoundError:'No se encontró cámara en este dispositivo.'
+        };
+        err.textContent=(msgs[e.name]||'No se pudo abrir la cámara.')+' (Código: '+e.name+')';
+        err.hidden=false; start.hidden=false; return;
+      }
+    }
+    track=stream.getVideoTracks()[0];
+    v.srcObject=stream;
+    start.hidden=true;
+    try{ await v.play(); }catch(e){}
+    boostExposure();
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    torchBtn.disabled=!caps.torch; torchOn=false; torchBtn.setAttribute('aria-pressed','false');
+    acc=null;
+    if(!running){running=true;requestAnimationFrame(loop);}
+  }
+
+  async function boostExposure(){
+    try{
+      const caps=track.getCapabilities?track.getCapabilities():{};
+      const adv={};
+      if(caps.exposureMode&&caps.exposureMode.includes('continuous')) adv.exposureMode='continuous';
+      if(caps.exposureCompensation) adv.exposureCompensation=caps.exposureCompensation.max;
+      if(caps.iso) adv.iso=caps.iso.max;
+      if(Object.keys(adv).length) await track.applyConstraints({advanced:[adv]});
+    }catch(e){}
+  }
+
+  function loop(){
+    try{
+    if(v.readyState>=2 && v.videoWidth){
+      const s=Math.min(1,MAXW/v.videoWidth);
+      const w=Math.round(v.videoWidth*s), h=Math.round(v.videoHeight*s);
+      if(c.width!==w||c.height!==h){c.width=w;c.height=h;acc=null;}
+      ctx.drawImage(v,0,0,w,h);
+      const img=ctx.getImageData(0,0,w,h), d=img.data, n=d.length;
+      if(!acc||acc.length!==n){acc=new Float32Array(n);for(let i=0;i<n;i++)acc[i]=d[i];}
+      const keep=smoothEl.value/100, take=1-keep, g=+gainEl.value;
+      for(let i=0;i<n;i+=4){
+        const r=acc[i]=acc[i]*keep+d[i]*take;
+        const gg=acc[i+1]=acc[i+1]*keep+d[i+1]*take;
+        const b=acc[i+2]=acc[i+2]*keep+d[i+2]*take;
+        if(green){
+          let y=(0.3*r+0.59*gg+0.11*b)/255;
+          y=Math.min(1,Math.sqrt(y*g)); // brillo + curva para sacar sombras
+          d[i]=y*120; d[i+1]=y*255; d[i+2]=y*140;
+        }else{
+          d[i]=Math.min(255,255*Math.sqrt(r/255*g));
+          d[i+1]=Math.min(255,255*Math.sqrt(gg/255*g));
+          d[i+2]=Math.min(255,255*Math.sqrt(b/255*g));
+        }
+      }
+      ctx.putImageData(img,0,0);
+    }
+    }catch(e){ c.style.display='none'; }
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('go').onclick=open;
+  modeBtn.onclick=()=>{green=!green;modeBtn.textContent=green?'Verde':'Color';modeBtn.setAttribute('aria-pressed',String(green));sync();};
+  torchBtn.onclick=async()=>{
+    if(!track)return;
+    try{torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});torchBtn.setAttribute('aria-pressed',String(torchOn));}
+    catch(e){torchOn=false;torchBtn.setAttribute('aria-pressed','false');}
+  };
+  flipBtn.onclick=()=>{facing=facing==='environment'?'user':'environment';if(stream)open();};
+})();
+</script>
+</body>
+</html>
