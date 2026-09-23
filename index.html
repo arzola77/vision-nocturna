@@ -20,18 +20,18 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
   font-family:"Saira Condensed","Arial Narrow",system-ui,sans-serif;overflow:hidden}
 .stage{position:relative;height:100%;display:flex;flex-direction:column}
 .view{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
-canvas{width:100%;height:100%;object-fit:cover;display:block}
-video{display:none}
-.vignette{pointer-events:none;position:absolute;inset:0;
+canvas,video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+canvas{z-index:1}
+.vignette{pointer-events:none;position:absolute;inset:0;z-index:2;
   background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.75) 100%)}
-.reticle{pointer-events:none;position:absolute;left:50%;top:50%;width:64px;height:64px;
+.reticle{pointer-events:none;z-index:2;position:absolute;left:50%;top:50%;width:64px;height:64px;
   transform:translate(-50%,-50%);border:1px solid rgba(141,255,168,.45);border-radius:50%}
 .reticle::before,.reticle::after{content:"";position:absolute;background:rgba(141,255,168,.45)}
 .reticle::before{left:50%;top:-14px;bottom:-14px;width:1px}
 .reticle::after{top:50%;left:-14px;right:-14px;height:1px}
-.hud{position:absolute;left:14px;top:12px;font-size:15px;letter-spacing:.04em;color:var(--phos);
+.hud{z-index:2;position:absolute;left:14px;top:12px;font-size:15px;letter-spacing:.04em;color:var(--phos);
   text-shadow:0 0 6px rgba(141,255,168,.6)}
-.start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+.start{z-index:3;position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:18px;padding:24px;text-align:center;background:var(--bg)}
 .start h1{margin:0;font-size:clamp(40px,12vw,64px);line-height:.95;font-weight:700;color:var(--phos);
   text-shadow:0 0 18px rgba(141,255,168,.35)}
@@ -56,7 +56,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--warn);outline-o
 <body>
 <div class="stage">
   <div class="view">
-    <video id="v" playsinline muted></video>
+    <video id="v" playsinline muted autoplay></video>
     <canvas id="c"></canvas>
     <div class="vignette"></div>
     <div class="reticle"></div>
@@ -116,8 +116,9 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--warn);outline-o
       }
     }
     track=stream.getVideoTracks()[0];
-    v.srcObject=stream; await v.play();
+    v.srcObject=stream;
     start.hidden=true;
+    try{ await v.play(); }catch(e){}
     boostExposure();
     const caps=track.getCapabilities?track.getCapabilities():{};
     torchBtn.disabled=!caps.torch; torchOn=false; torchBtn.setAttribute('aria-pressed','false');
@@ -137,6 +138,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--warn);outline-o
   }
 
   function loop(){
+    try{
     if(v.readyState>=2 && v.videoWidth){
       const s=Math.min(1,MAXW/v.videoWidth);
       const w=Math.round(v.videoWidth*s), h=Math.round(v.videoHeight*s);
@@ -161,6 +163,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--warn);outline-o
       }
       ctx.putImageData(img,0,0);
     }
+    }catch(e){ c.style.display='none'; }
     requestAnimationFrame(loop);
   }
 
